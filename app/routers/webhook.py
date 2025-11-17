@@ -89,7 +89,7 @@ async def webhook2(payload: AlertPayload):
     profile = PROFILE_WEBHOOK2
 
     # 👉 원하는 커스텀 레버리지 설정
-    custom_leverage = 10
+    custom_leverage = 2
 
     if DRY_RUN:
         logger.info(f"[DRY_RUN] {action} {sym} ({profile})")
@@ -157,7 +157,7 @@ async def webhook2(payload: AlertPayload):
     profile = PROFILE_WEBHOOK3
 
     # 👉 원하는 커스텀 레버리지 설정
-    custom_leverage = 2
+    custom_leverage = 5
 
     if DRY_RUN:
         logger.info(f"[DRY_RUN] {action} {sym} ({profile})")
