@@ -15,8 +15,8 @@ def _default_state(symbol: str, profile: str) -> dict:
     return {
         "profile": profile,
         "symbol":         symbol,
-        "capital":        50.0,       # 초기 자본 $50
-        "initial_capital": 50.0,  # 처음 기준 자본 (수익률 계산용)
+        "capital":        100.0,       # 초기 자본 $100
+        "initial_capital": 100.0,  # 처음 기준 자본 (수익률 계산용)
         
 
         # 진입 정보
