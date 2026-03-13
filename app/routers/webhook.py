@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.config import DRY_RUN
 from app.services.switching import switch_position
 from app.state import get_state
+from app.services.switching_hedge import switch_position_hedge
 
 logger = logging.getLogger("webhook")
 router = APIRouter()
@@ -19,6 +20,9 @@ class AlertPayload(BaseModel):
 PROFILE_WEBHOOK1 = "webhook1"
 PROFILE_WEBHOOK2 = "webhook2"
 PROFILE_WEBHOOK3 = "webhook3"
+PROFILE_WEBHOOK4 = "webhook4"
+PROFILE_WEBHOOK5 = "webhook5"
+PROFILE_WEBHOOK6 = "webhook6"
 
 # 복리 쓰는 레버리지 설정
 @router.post("/webhook")
@@ -89,7 +93,7 @@ async def webhook2(payload: AlertPayload):
     profile = PROFILE_WEBHOOK2
 
     # 👉 원하는 커스텀 레버리지 설정
-    custom_leverage = 2
+    custom_leverage = 5
 
     if DRY_RUN:
         logger.info(f"[DRY_RUN] {action} {sym} ({profile})")
@@ -151,13 +155,13 @@ async def webhook2(payload: AlertPayload):
 
 # ✅ webhook3도 동일 (단, 필요 시 같은 방식으로 STOP 로그 추가 가능) -> 복리 안쓰는 낮은 레버리지
 @router.post("/webhook3")
-async def webhook2(payload: AlertPayload):
+async def webhook3(payload: AlertPayload):
     sym    = payload.symbol.upper().replace("/", "")
     action = payload.action.upper()
     profile = PROFILE_WEBHOOK3
 
     # 👉 원하는 커스텀 레버리지 설정
-    custom_leverage = 5
+    custom_leverage = 2
 
     if DRY_RUN:
         logger.info(f"[DRY_RUN] {action} {sym} ({profile})")
@@ -216,3 +220,127 @@ async def webhook2(payload: AlertPayload):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "ok", "result": res}
+
+# ✅ webhook4 -> 복리 쓰는 커스텀 레버리지 전략
+@router.post("/webhook4")
+async def webhook4(payload: AlertPayload):
+    sym     = payload.symbol.upper().replace("/", "")
+    action  = payload.action.upper()
+    profile = PROFILE_WEBHOOK4
+
+    # 👉 여기서 원하는 커스텀 레버리지 설정 (예: 2배)
+    custom_leverage = 2
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym} ({profile})")
+        return {"status": "dry_run"}
+
+    try:
+        # use_initial_capital=False (기본값) → 복리 운용
+        res = switch_position(
+            sym,
+            action,
+            profile=profile,
+            leverage=custom_leverage,
+            # use_initial_capital=False  # 생략 시 False라 복리
+        )
+
+        if "skipped" in res:
+            logger.info(f"Skipped {action} {sym} ({profile}): {res['skipped']}")
+            return {"status": "skipped", "reason": res["skipped"]}
+
+        state = get_state(sym, profile)
+        now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+
+        if action == "BUY":
+            info  = res.get("buy", {})
+            entry = float(info.get("entry", 0))
+            qty   = float(info.get("filled", 0))
+            state.update({
+                "entry_price":   entry,
+                "position_qty":  qty,
+                "entry_time":    now,
+            })
+
+        elif action == "SELL":
+            info  = res.get("sell", {})
+            entry = float(info.get("entry", 0))
+            qty   = float(info.get("filled", 0))
+            state.update({
+                "entry_price":   entry,
+                "position_qty":  -qty,
+                "entry_time":    now,
+            })
+
+        elif action in ("BUY_STOP", "SELL_STOP"):
+            exit_price = res.get("exit_price", 0.0)
+            pnl        = res.get("pnl", 0.0)
+
+            state.update({
+                "entry_price":   0.0,
+                "position_qty":  0.0,
+                "entry_time":    now,
+            })
+
+            logger.info(f"[{action}] {profile}:{sym} EXIT @ {exit_price}, PnL {pnl:.2f}%")
+
+    except Exception as e:
+        logger.exception(f"Error switching in webhook4 for {action} {sym} ({profile})")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "ok", "result": res}
+
+class AlertPayloadV5(BaseModel):
+    symbol: str
+    action: str
+    leverage: int
+
+@router.post("/webhook5")
+async def webhook5(payload: AlertPayloadV5):
+    sym = payload.symbol.upper().replace("/", "")
+    action = payload.action.upper()
+    profile = PROFILE_WEBHOOK5
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym} lev={payload.leverage} ({profile})")
+        return {"status": "dry_run"}
+
+    try:
+        res = switch_position_hedge(
+            symbol=sym,
+            action=action,
+            leverage=payload.leverage,
+            profile=profile,
+            use_initial_capital=False,  # ✅ 복리
+        )
+        if "skipped" in res:
+            return {"status": "skipped", "reason": res["skipped"], "result": res}
+        return {"status": "ok", "result": res}
+    except Exception as e:
+        logger.exception(f"Error processing {action} for {sym} ({profile})")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/webhook6")
+async def webhook6(payload: AlertPayloadV5):
+    sym = payload.symbol.upper().replace("/", "")
+    action = payload.action.upper()
+    profile = PROFILE_WEBHOOK6
+
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] {action} {sym} lev={payload.leverage} ({profile})")
+        return {"status": "dry_run"}
+
+    try:
+        res = switch_position_hedge(
+            symbol=sym,
+            action=action,
+            leverage=payload.leverage,
+            profile=profile,
+            use_initial_capital=True,  # ✅ 복리X (initial_capital 고정)
+        )
+        if "skipped" in res:
+            return {"status": "skipped", "reason": res["skipped"], "result": res}
+        return {"status": "ok", "result": res}
+    except Exception as e:
+        logger.exception(f"Error processing {action} for {sym} ({profile})")
+        raise HTTPException(status_code=500, detail=str(e))
